@@ -1,0 +1,43 @@
+clear all
+clc
+
+I0 = 500;
+Tc = 60/72;     % cardiac period
+Ts = (2/5)*Tc;  % systolic duration
+
+%Modify parameter here to change time span
+time_span = 10;
+
+%Modify parameters here to change pressure waveform
+R = 1; C = 1; R1 = 0.05; L = 0.005;
+
+% Input Signal Functions
+
+%Blood flow function I(t)
+I = @(t) I0*sin((pi*mod(t,Tc))/Ts).^2.*(mod(t,Tc)<=Ts);
+
+%Blood flow first derivative  I'(t)
+Idot = @(t) I0*2*sin(pi*mod(t,Tc)/Ts).*cos(pi*mod(t,Tc)/Ts)*pi/Ts.*(mod(t,Tc)<=Ts);
+
+%Blood flow second derivative I"(t)
+Idotdot = @(t) I0*2*(cos(pi*mod(t,Tc)/Ts).^2 - sin(pi*mod(t,Tc)/Ts).^2)*(pi/Ts)^2.*(mod(t,Tc)<=Ts);
+
+% 4-element Windkessel ODE - formulation online somewhere
+fun = @(t,y)[y(2);
+    (Idotdot(t)*(R*L*C*R1)+Idot(t)*(L*(R+R1))+I(t)*(R*R1) - (y(2)*(C*R*R1+L)+y(1)*R1))/(L*C*R)];
+
+% Initial conditions and time span 
+y0 = [80; 0];
+tspan = [0 time_span*Tc];
+
+% Solve
+[T,Y] = ode45(fun,tspan,y0);
+
+% Plot pressure
+plot(T,Y(:,1),'g')
+xlabel('Time (s)')
+ylabel('Pressure (mmHg)')
+title('Four-Element Windkessel Model')
+
+%Solution object can be opened to get voltage values
+%Most likely exert the voltage in mV towards voltmeter
