@@ -1,5 +1,6 @@
-clear all
+clear
 clc
+
 
 %Initial condition, do not change
 I0 = 500;
