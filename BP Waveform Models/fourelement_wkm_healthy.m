@@ -1,9 +1,12 @@
 clear all
 clc
 
+%Initial condition, do not change
 I0 = 500;
-Tc = 60/72;     % cardiac period
-Ts = (2/5)*Tc;  % systolic duration
+
+%Cardiac period Tc and systolic duration Ts
+Tc = 60/72;     
+Ts = (2/5)*Tc;  
 
 %Modify parameter here to change time span
 time_span = 10;
