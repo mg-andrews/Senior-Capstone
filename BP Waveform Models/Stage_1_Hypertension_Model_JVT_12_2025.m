@@ -10,10 +10,10 @@ Tc = 60/72;
 Ts = (2/5)*Tc;  
 
 %Modify parameter here to change time span
-time_span = 20;
+time_span = 5;
 
 %Keep Constant
-R = 1; C = 1; R1 = 0.05; L = 0.005;
+R = 1.05; C = 1.28; R1 = 0.046; L = 0.0072;
 
 % Input Signal Functions
 
@@ -51,6 +51,6 @@ end
 plot(bp_data(:,1), bp_data(:,2), 'LineWidth', 2)
 xlabel('Time (s)')
 ylabel('Pressure (mmHg)')
-title('Pressure vs Time')
+title('Arterial Blood Pressure (mmHg) vs Time (s)')
 grid on
 
