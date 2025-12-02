@@ -3,7 +3,7 @@ clc
 
 
 %Initial condition, do not change
-I0 = 500;
+I0 = 424.1;
 
 %Cardiac period Tc and systolic duration Ts
 Tc = 60/72;     
@@ -54,3 +54,4 @@ ylabel('Pressure (mmHg)')
 title('Pressure vs Time')
 grid on
 
+writematrix(bp_data, 'Healthy_BP_JVT_12_2025.csv');
