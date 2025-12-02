@@ -2,7 +2,7 @@ clear
 clc
 
 
-%Initial condition, do not change
+%Initial condition
 I0 = 500;
 
 %Cardiac period Tc and systolic duration Ts
@@ -10,9 +10,9 @@ Tc = 60/72;
 Ts = (2/5)*Tc;  
 
 %Modify parameter here to change time span
-time_span = 10;
+time_span = 20;
 
-%Modify parameters here to change pressure waveform
+%Keep Constant
 R = 1; C = 1; R1 = 0.05; L = 0.005;
 
 % Input Signal Functions
@@ -48,9 +48,9 @@ for i = 1:length(Y)
     bp_data(i, 1) = T(i);
 end 
 
-
-plot(bp_da(:,1), M(:,2), 'LineWidth', 2)
+plot(bp_data(:,1), bp_data(:,2), 'LineWidth', 2)
 xlabel('Time (s)')
 ylabel('Pressure (mmHg)')
 title('Pressure vs Time')
 grid on
+

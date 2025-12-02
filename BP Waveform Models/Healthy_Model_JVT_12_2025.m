@@ -2,7 +2,7 @@ clear
 clc
 
 
-%Initial condition, do not change
+%Initial condition
 I0 = 424.1;
 
 %Cardiac period Tc and systolic duration Ts
@@ -12,7 +12,7 @@ Ts = (2/5)*Tc;
 %Modify parameter here to change time span
 time_span = 20;
 
-%Modify parameters here to change pressure waveform
+%Keep Constant
 R = 1; C = 1; R1 = 0.05; L = 0.005;
 
 % Input Signal Functions
@@ -54,4 +54,3 @@ ylabel('Pressure (mmHg)')
 title('Pressure vs Time')
 grid on
 
-writematrix(bp_data, 'Healthy_BP_JVT_12_2025.csv');
