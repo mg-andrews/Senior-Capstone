@@ -1,0 +1,67 @@
+#include <math.h>
+
+// Define pins
+#define OUT_PIN 36
+#define READ_PIN 10
+#define V_PLUS 39
+#define INPUT_PIN 38
+
+// Sim parameter
+float TIME_CONST = 0.0; // Init time constant
+float MAX_TIME_CONST = 60; // 60 is very slow decay around 150 pressure 
+const float FILL_RATE = 50.0; // units/sec 
+const float MAX_VAL = 360.0; // Max pressure possible
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(OUT_PIN, OUTPUT);
+  pinMode(V_PLUS, OUTPUT);
+  pinMode(READ_PIN, INPUT);
+  pinMode(INPUT_PIN, INPUT_PULLUP);
+
+  digitalWrite(V_PLUS, HIGH); // Sets input of pot to 3.3V
+
+  ledcAttach(OUT_PIN, 10000, 10); // 10kH 10-bit PMW signal
+}
+
+void loop() {
+  // Timing init
+  static float P = 0.0; // Pressure state
+  static unsigned long last_update = 0;
+
+  // Calculate time between loops
+  unsigned long now = millis();
+  float dt = (now - last_update) * 0.001; // dt in seconds
+  last_update = now;
+
+  // Update every millisecond
+  if (dt >= 0) {
+
+    // Check dial position and update TIME_CONST
+    float pot_read = analogRead(READ_PIN);
+    TIME_CONST = (pot_read / 4095.0f) * MAX_TIME_CONST;
+    TIME_CONST = max(TIME_CONST, 0.05f);
+
+    // Exponential leak
+    P *= exp(-dt/TIME_CONST);
+
+    // Button input
+    if (!digitalRead(INPUT_PIN)) {
+      // Button action
+      P += FILL_RATE * dt; // Increase P by FILL_RATE every dt
+    }
+
+    P = constrain(P, 0, MAX_VAL);
+    int pmw_out = (int)(P / (MAX_VAL) * 1023.0);
+
+    ledcWrite(OUT_PIN, pmw_out); // Output pressure signal
+
+    // Debug serial print
+    Serial.print(P, 3);
+    Serial.print(" , ");
+    Serial.print(pot_read, 3);
+    Serial.print(" , ");
+    Serial.println(TIME_CONST, 3);
+  }
+}
