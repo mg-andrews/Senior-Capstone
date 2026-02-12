@@ -1,0 +1,81 @@
+#include <math.h>
+
+// Define pins
+#define OUT_PIN 36
+#define READ_PIN 37
+#define INPUT_PIN 38
+
+// Sim constants
+const float TIME_CONST = 5.0;
+const float INIT_VAL = 10.0;
+const float MAX_VAL = 10.0;
+
+// Init button state
+int buttonState;
+int lastButtonState = HIGH;
+
+// Button debounce params
+unsigned long lastDebounce = 0;
+unsigned long debounceDelay = 50;
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(OUT_PIN, OUTPUT);
+  pinMode(READ_PIN, INPUT);
+  pinMode(INPUT_PIN, INPUT);
+
+  ledcAttach(OUT_PIN, 10000, 10);
+  ledcWrite(OUT_PIN, INIT_VAL);
+}
+
+void loop() {
+  // Timing init
+  static float t = 0.0;
+  static unsigned long last_update = 0;
+  static int pmw_out = 0;
+
+  // Calculate time between loops
+  unsigned long now = millis();
+  unsigned long elapsed = now - last_update;
+  last_update = now;
+
+  // Update every millisecond
+  if (elapsed >= 1) {
+    t += 0.001;
+    
+    // Check button state
+    int button_read = digitalRead(INPUT_PIN);
+
+    // Debounce logic
+    if (button_read != lastDebounce) {
+      lastDebounce = millis();
+    }
+
+    if ((millis() - lastDebounce) > debounceDelay) {
+      if (button_read != buttonState) {
+        buttonState = button_read;
+        if (buttonState == LOW) {
+          // Button action
+
+        }
+      }
+    }
+
+    lastButtonState = button_read;
+    
+    // Air release simulation
+    float out_val = INIT_VAL * exp(-t/TIME_CONST);
+
+    pmw_out = (int)((out_val) / (MAX_VAL) * 1023.0);
+    pmw_out = constrain(pmw_out, 0, 1023);
+
+    // Debug serial print
+    Serial.print(t , 3);
+    Serial.print(" , ");
+    Serial.println(out_val, 3);
+  }
+
+
+  ledcWrite(OUT_PIN, pmw_out);
+}

@@ -1,0 +1,166 @@
+#include <math.h>
+#include <TMCStepper.h>
+#include <FastAccelStepper.h>
+
+// Define pins
+#define OUT_PIN 36
+#define READ_PIN 10
+#define V_PLUS 39
+#define INPUT_PIN 38
+
+#define EN_PIN   16
+#define STEP_PIN 17
+#define DIR_PIN  18
+
+#define UART_TX  5
+#define UART_RX  6
+
+// Sim parameter
+float TIME_CONST = 0.0; // Init time constant
+float MAX_TIME_CONST = 40.0; // 60 is very slow decay around 150 pressure 
+const float FILL_RATE = 50.0; // units/sec 
+const float MAX_VAL = 360.0; // Max pressure possible
+
+// Init driver
+#define R_SENSE 0.11f
+TMC2209Stepper driver(&Serial1, R_SENSE, 0b00);
+
+// Init FastAccel engine
+FastAccelStepperEngine engine = FastAccelStepperEngine();
+FastAccelStepper *stepper = NULL;
+
+// Stepper parameters
+float full_steps = 200.0;
+int microstep = 32;
+
+const float steps_per_rev = full_steps * microstep;
+const float steps_per_degree = steps_per_rev / 360.0f;
+
+const float max_speed_hz = 10000;
+const float dead_band = 0.2;
+
+// Map 0:300 mmHg to 360 degrees
+const float mmhg_range = 360.0f;
+const float steps_per_mmhg = steps_per_rev / mmhg_range;
+
+float angle_to_step(float angle) {
+  return angle * (steps_per_rev / 360);
+}
+float pressure_to_steps(float pressure) {
+  return pressure * steps_per_mmhg; // linear mapping
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Cuff pressure setup
+  pinMode(OUT_PIN, OUTPUT);
+  pinMode(V_PLUS, OUTPUT);
+  pinMode(READ_PIN, INPUT);
+  pinMode(INPUT_PIN, INPUT_PULLUP);
+
+  digitalWrite(V_PLUS, HIGH); // Sets input of pot to 3.3V
+
+  ledcAttach(OUT_PIN, 10000, 10); // 10kH 10-bit PMW signal
+
+  // Motor driver setup
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+
+  digitalWrite(EN_PIN, HIGH); // Disable driver for config
+  digitalWrite(DIR_PIN, HIGH); // LOW: CCW
+
+  Serial1.begin(115200, SERIAL_8N1, UART_RX, UART_TX);
+  delay(100);
+
+  driver.begin();
+  driver.toff(4);
+  driver.blank_time(24);
+  driver.internal_Rsense(false);
+  driver.I_scale_analog(false);
+  driver.mstep_reg_select(true);
+  driver.microsteps(microstep);
+
+  driver.en_spreadCycle(false);   // stable torque
+  driver.TPWMTHRS(250);            // disable StealthChop
+  driver.semin(0);               // disable CoolStep
+  driver.rms_current(150);       // Max 0.25A RMS
+  driver.hold_multiplier(0.2);   // Reduce idle heat & noise
+
+  driver.pdn_disable(true);
+
+  // Motor engine setup
+  engine.init();
+  stepper = engine.stepperConnectToPin(STEP_PIN);
+  stepper->setDirectionPin(DIR_PIN);
+  stepper->setEnablePin(EN_PIN);
+  stepper->setAutoEnable(false);  // This sets the enable pin and turns the TMC2209 on/off atomatically
+
+  /*
+  stepper->setSpeedInHz(set_vel);
+  stepper->setAcceleration(set_accel);
+  */
+
+  digitalWrite(EN_PIN, LOW); // Enable driver
+
+  // Check UART works
+  Serial.print("TMC version: 0x");
+  Serial.println(driver.version(), HEX);
+  Serial.print("Current readback: ");
+  Serial.println(driver.rms_current());
+
+  stepper->setSpeedInHz(2000);
+  stepper->setAcceleration(5000);
+
+  delay(500);
+}
+
+void loop() {
+  // Timing init
+  static float P = 0.0; // Pressure state
+  static unsigned long last_update = 0;
+  static long last_step = 0;
+
+  // Calculate time between loops
+  unsigned long now = millis();
+  float dt = (now - last_update) * 0.001; // dt in seconds
+  last_update = now;
+
+  // Update every millisecond
+  if (dt > 0) {
+
+    // Check pot position and update TIME_CONST
+    float pot_read = analogRead(READ_PIN);
+    TIME_CONST = (pot_read / 4095.0f) * MAX_TIME_CONST;
+    TIME_CONST = max(TIME_CONST, 0.05f);
+
+    // Exponential leak
+    P *= exp(-dt/TIME_CONST);
+
+    // Button input
+    if (!digitalRead(INPUT_PIN)) {
+      // Button action
+      P += FILL_RATE * dt; // Increase P by FILL_RATE every dt
+    }
+
+    P = constrain(P, 0, MAX_VAL);
+    long target_step = (long)pressure_to_steps(P);
+    if (abs(target_step - last_step) >=1) {
+      stepper->moveTo(target_step);
+      last_step = target_step;
+    }
+
+    // Debug serial print
+    Serial.print("Pressure: ");
+    Serial.print(P, 3);
+    Serial.print(" , ");
+    Serial.print("Pot voltage: ");
+    Serial.print(pot_read, 3);
+    Serial.print(" , ");
+    Serial.print("Time constant: ");
+    Serial.println(TIME_CONST, 3);
+    Serial.print("Target step: ");
+    Serial.println(target_step);
+  }
+}
