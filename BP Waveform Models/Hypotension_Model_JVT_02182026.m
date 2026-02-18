@@ -54,3 +54,4 @@ ylabel('Pressure (mmHg)')
 title('Arterial Blood Pressure (mmHg) vs Time (s)')
 grid on
 
+%writematrix(bp_data, 'C:\Users\joshu\Documents\GitHub\Senior-Capstone\BP Waveform Models\Hypotension_JVT_02182026.csv')
