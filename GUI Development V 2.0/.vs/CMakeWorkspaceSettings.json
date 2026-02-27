@@ -1,0 +1,4 @@
+{
+  "enableCMake": true,
+  "sourceDirectory": "lv_sim_eclipse_sdl"
+}
