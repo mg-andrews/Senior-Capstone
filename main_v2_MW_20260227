@@ -1,0 +1,484 @@
+// Main
+// Author: Miles Wilson
+// Published: 02/27/2026
+
+// Uses FreeRTOS to schedule serial input, heart rate, pressure simulation, and stepper motor update tasks.
+// Added setup and running states, cleaned heart rate logic, expanded serial line interface
+
+// Arduino IDE
+// Windows 11
+// board: esp32s3
+
+#include <stdlib.h>
+#include <math.h>
+#include <TMCStepper.h>
+#include <FastAccelStepper.h>
+
+// Define pins
+#define POT_PIN 10
+#define V_PLUS 39
+#define BUTTON_PIN 38
+#define VIO_PIN 15
+
+#define EN_PIN   16
+#define STEP_PIN 17
+#define DIR_PIN  18
+
+#define UART_TX  5
+#define UART_RX  6
+
+#define HRLED 36
+
+// Cuff simulation param init
+float cuffPressure = 0.0f;
+float outputPressure = 0.0f;
+float tau = 5.0f;     // seconds (default)
+float inflationRate = 50.0f;
+
+volatile float pulseAmplitude = 3.0f;   // small bump
+volatile float pulseTime = 0.0f;
+volatile bool pulseActive = false;
+volatile bool firstCycle = true;
+
+float systole = 120.0f;
+float diastole = 80.0f;
+
+portMUX_TYPE cuffMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Heart rate queue and timer init
+TimerHandle_t heartbeatTimer;
+TimerHandle_t LEDOffTimer;
+
+int HR_MIN = 40;
+int HR_MAX = 200;
+int currentHR = 60;
+
+// Motor init
+portMUX_TYPE motorMUX = portMUX_INITIALIZER_UNLOCKED;
+
+const int microstep = 32;
+const float full_steps = 200.0;
+const float steps_per_rev = microstep * full_steps;
+const int deadband = 2; // In steps
+
+#define R_SENSE 0.11f
+TMC2209Stepper driver(&Serial1, R_SENSE, 0b00);
+
+FastAccelStepperEngine engine = FastAccelStepperEngine();
+FastAccelStepper *stepper = NULL;
+
+// Define queues
+QueueHandle_t motor_queue;
+static const uint8_t motor_queue_len = 1; // Keep 1 so motor always follows latest position update
+QueueHandle_t event_queue;
+static const uint8_t event_queue_len = 10;
+
+// Task handles
+TaskHandle_t StateManagerHandle = NULL;
+TaskHandle_t MotorHandle = NULL;
+TaskHandle_t HRHandle = NULL;
+TaskHandle_t CuffHandle = NULL;
+TaskHandle_t SerialHandle = NULL;
+
+// Define system states
+typedef enum {
+  STATE_SETUP,
+  STATE_RUNNING
+} SystemState_t;
+
+// Define events
+typedef enum {
+  EVENT_STARTSIM,
+  EVENT_STOPSIM,
+  EVENT_HRUPDATE,
+  EVENT_HEARTBEAT
+} SystemEventType_t;
+
+// Define event object structure
+typedef struct {
+  SystemEventType_t type;
+  float value;
+} SystemEvent_t;
+
+volatile SystemState_t currentState = STATE_SETUP;
+
+//--------------------------------------------------------------------------------------------------
+// Helper functions
+//
+
+// Heartbeat param update
+// Task: Updates HR
+void updateHeartRate() {
+
+    int hrPeriod = (60000 / currentHR);
+
+    xTimerChangePeriod(
+      heartbeatTimer,
+      pdMS_TO_TICKS(hrPeriod),
+      portMAX_DELAY
+    );
+
+    Serial.print("HR updated to ");
+    Serial.print(currentHR);
+    Serial.println(" BPM");
+}
+
+//--------------------------------------------------------------------------------------------------
+// Callbacks
+
+// Heartbeat timer callback
+void heartbeatCallback(TimerHandle_t xTimer) {
+  digitalWrite(HRLED, HIGH);
+  xTimerStart(LEDOffTimer, 0);
+}
+
+// Turns led off at end of LEDOffTimer
+void LEDTimerCallback(TimerHandle_t xTimer) {
+  digitalWrite(HRLED, LOW);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Tasks
+
+// State manager task
+void StateManagerTask(void *parameter) {
+
+  SystemEvent_t event;
+
+  for(;;) {
+
+    if(xQueueReceive(event_queue, &event, portMAX_DELAY)) {
+
+      switch(currentState) {
+        case STATE_SETUP:
+
+          if(event.type == EVENT_STARTSIM) {
+
+            Serial.println("State swapped: (SETUP --> RUNNING)");
+
+            updateHeartRate();
+            xTimerStart(heartbeatTimer, 0);
+
+            firstCycle = true;
+            vTaskResume(CuffHandle);
+            vTaskResume(MotorHandle);
+
+            currentState = STATE_RUNNING;
+
+          } else if(event.type == EVENT_HRUPDATE) {
+            
+            currentHR = (int)event.value;
+            Serial.print("HR set to ");
+            Serial.print(currentHR);
+            Serial.println(" BPM");
+          }
+
+          break;
+
+        case STATE_RUNNING:
+
+          if(event.type == EVENT_STOPSIM) {
+
+            Serial.println("State swapped: (RUNNING --> SETUP)");
+
+            xTimerStop(heartbeatTimer, 0);
+            vTaskSuspend(CuffHandle);
+
+            // Sets sim pressures to 0 while blocking any outside updates
+            portENTER_CRITICAL(&cuffMux);
+            cuffPressure = 0;
+            outputPressure = 0;
+            portEXIT_CRITICAL(&cuffMux);
+
+            // Zero motor on simulation stop
+            float zero = 0.0f;
+            xQueueOverwrite(motor_queue, &zero);
+            xTaskNotify(MotorHandle, 0, eNoAction);
+
+            // 3-second timeout before motor zeroing is cancelled
+            TickType_t startTime = xTaskGetTickCount();
+            while (stepper->getCurrentPosition() != 0) {
+              if (xTaskGetTickCount() - startTime > pdMS_TO_TICKS(3000)) {
+                Serial.println("Warning: Motor zero timeout");
+                break;
+              }
+              vTaskDelay(pdMS_TO_TICKS(10));
+            }
+
+            Serial.println("Motor zeroed");
+            vTaskSuspend(MotorHandle);
+
+            currentState = STATE_SETUP;
+
+          } else if(event.type == EVENT_HEARTBEAT) {
+
+            // Logic for korotkoff sounds and motor pulse on heartbeat
+
+          } else if(event.type == EVENT_HRUPDATE) {
+
+            currentHR = (int)event.value;
+            updateHeartRate();
+          }
+
+          break;
+
+      }
+    }
+  }
+}
+
+// Task: Wait for serial parameter input and put in queue
+void SerialTask(void *parameter) {
+
+  for(;;) {
+
+    if(Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      input.trim();
+
+      SystemEvent_t event ={};
+
+      if(input == "start") {
+
+        event.type = EVENT_STARTSIM;
+        xQueueSend(event_queue, &event, portMAX_DELAY);
+
+      } else if(input == "stop") {
+
+        event.type = EVENT_STOPSIM;
+        xQueueSend(event_queue, &event, portMAX_DELAY);
+
+      } else if(input.startsWith("hr ")) {
+
+        float hrInput = input.substring(3).toFloat();
+        if(hrInput >= HR_MIN && hrInput <= HR_MAX) {
+          event.type = EVENT_HRUPDATE;
+          event.value = hrInput;
+          xQueueSend(event_queue, &event, portMAX_DELAY);
+
+        } else {
+
+          Serial.print("HR input out of range. HR must be between ");
+          Serial.print(HR_MIN);
+          Serial.print(" and ");
+          Serial.print(HR_MAX);
+          Serial.println(" BPM");
+        }
+        
+      }
+
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50)); // Check for input every 50 ms
+  }
+}
+
+// Task: Update cuff pressure model
+void CuffTask(void *parameter) {
+  const float dt = 0.005f;   // 5 ms --> 200 Hz update
+  TickType_t lastWakeTime = xTaskGetTickCount();
+  firstCycle = true;
+
+  for(;;) {
+    if(firstCycle) {
+      lastWakeTime = xTaskGetTickCount();
+      firstCycle = false;
+    }
+    // Read potentiometer
+    int potValue = analogRead(POT_PIN);
+
+    // Map to tau range (1s to 40s)
+    tau = 1.0f + (potValue / 4095.0f) * 39.0f;
+
+    // Read button to input pressure in system
+    if (!digitalRead(BUTTON_PIN)) {
+      cuffPressure += inflationRate * dt;   // Cuff inflation rate
+      if (cuffPressure > 360.0f)
+        cuffPressure = 360.0f;
+    }
+
+    // Exponential decay model
+    cuffPressure *= expf(-dt / tau);    
+
+    // Clamp small values
+    if (cuffPressure < 0.1f)
+      cuffPressure = 0.0f;
+
+    xQueueOverwrite(motor_queue, &cuffPressure);
+
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(dt * 1000));
+  }
+}
+
+// Task: Update stepper position based on pressure in motor_queue
+void MotorTask(void *parameter) {
+  float pressure;
+  int lastPosition = 0;
+
+  for(;;) {
+
+    if(xTaskNotifyWait(0, 0, NULL, 0) == pdTRUE) {
+      
+      stepper->moveTo(0);
+      lastPosition = 0;
+    }
+
+    if (xQueueReceive(motor_queue, &pressure, portMAX_DELAY) == pdTRUE) {
+      // Convert pressure to motor position
+      int targetPosition = (int)((pressure / 360.0f) * steps_per_rev);
+
+      if (abs(targetPosition - lastPosition) > deadband) {
+        stepper->moveTo(targetPosition);
+        lastPosition = targetPosition;
+      }
+    }
+  }
+}
+
+//-------------------------------------------------------------------------
+// Setup
+
+void setup() {
+  
+  Serial.begin(115200);
+  delay(300 / portTICK_PERIOD_MS);
+
+  // Cuff pressure setup
+  pinMode(V_PLUS, OUTPUT);
+  pinMode(VIO_PIN, OUTPUT);
+  pinMode(POT_PIN, INPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  pinMode(HRLED, OUTPUT);
+
+  digitalWrite(V_PLUS, HIGH); // Sets input of pot to 3.3V
+  digitalWrite(VIO_PIN, HIGH); // Sets input to VIO on driver to 3.3V
+
+  // Motor driver setup
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+
+  digitalWrite(EN_PIN, HIGH); // Disable driver for config
+  digitalWrite(DIR_PIN, HIGH); // LOW: CCW
+
+  Serial1.begin(115200, SERIAL_8N1, UART_RX, UART_TX);
+  delay(100);
+
+  driver.begin();
+  driver.toff(4);
+  driver.blank_time(24);
+  driver.internal_Rsense(false);
+  driver.I_scale_analog(false);
+  driver.mstep_reg_select(true);
+  driver.microsteps(microstep);
+
+  driver.en_spreadCycle(false);   // stable torque
+  driver.TPWMTHRS(250);            // disable StealthChop
+  driver.semin(0);               // disable CoolStep
+  driver.rms_current(150);       // Max 0.15A RMS
+  driver.hold_multiplier(0.2);   // Reduce idle heat & noise
+
+  driver.pdn_disable(true);
+
+  // Motor engine setup
+  engine.init();
+  stepper = engine.stepperConnectToPin(STEP_PIN);
+  stepper->setDirectionPin(DIR_PIN);
+  stepper->setEnablePin(EN_PIN);
+  stepper->setAutoEnable(false);  // True sets the enable pin and turns the TMC2209 on/off atomatically
+
+  /*
+  stepper->setSpeedInHz(set_vel);
+  stepper->setAcceleration(set_accel);
+  */
+
+  digitalWrite(EN_PIN, LOW); // Enable driver
+
+  // Check UART works
+  Serial.print("TMC version: 0x");
+  Serial.println(driver.version(), HEX);
+  Serial.print("Current readback: ");
+  Serial.println(driver.rms_current());
+
+  stepper->setSpeedInHz(2000);
+  stepper->setAcceleration(5000);
+
+  // Input messages
+  Serial.println("");
+  Serial.println("       ...");
+  Serial.println("Setup initialized");
+  Serial.println("       ...");
+  Serial.println("Input heart rate by typing 'hr [BPM]");
+  Serial.println("Start simulation by typing 'start'");
+  Serial.println("Suspend simulation by typing 'stop'");
+
+  // Create queues
+  motor_queue = xQueueCreate(motor_queue_len, sizeof(float));
+  event_queue = xQueueCreate(event_queue_len, sizeof(SystemEvent_t));
+
+  // Create software timers
+  heartbeatTimer = xTimerCreate(
+    "HeartbeatTimer",
+    pdMS_TO_TICKS(500),
+    pdTRUE, // Retriggers on end
+    NULL,
+    heartbeatCallback
+  );
+
+  LEDOffTimer = xTimerCreate(
+    "LEDOffTimer",
+    pdMS_TO_TICKS(100),
+    pdFALSE, // One-shot
+    NULL,
+    LEDTimerCallback
+  );
+
+  // Create task instances
+  xTaskCreatePinnedToCore(
+    StateManagerTask,     // Task function
+    "StateManagerTask",   // Task name
+    4096,           // Stack size in bytes
+    NULL,           // Parameters
+    2,              // Priority
+    &StateManagerHandle,  // Task handle
+    1   
+  );
+
+  xTaskCreatePinnedToCore(
+    SerialTask,     // Task function
+    "SerialTask",   // Task name
+    4096,           // Stack size in bytes
+    NULL,           // Parameters
+    1,              // Priority
+    &SerialHandle,  // Task handle
+    1               // Run on core 1
+  );
+
+  xTaskCreatePinnedToCore(
+    CuffTask,     // Task function
+    "CuffTask",   // Task name
+    2048,         // Stack size
+    NULL,         // Parameters
+    4,            // Priority
+    &CuffHandle,  // Task handle
+    1             // Run on core 1
+  );
+
+  vTaskSuspend(CuffHandle);
+
+  xTaskCreatePinnedToCore(
+    MotorTask,        // Task function
+    "MotorTask",      // Task name
+    4096,             // Stack size in bytes
+    NULL,             // Parameters
+    4,                // Priority
+    &MotorHandle,     // Task handle
+    1                 // Run on core 1
+  );
+
+  vTaskSuspend(MotorHandle);
+}
+
+void loop() {
+}

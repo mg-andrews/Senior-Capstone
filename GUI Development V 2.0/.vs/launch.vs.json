@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "lv_sim_eclipse_sdl\\CMakeLists.txt",
+      "projectTarget": "main.exe (C:\\Users\\andre\\Downloads\\BIO_ENG 410\\GUI Development V 3.0\\lv_sim_eclipse_sdl\\bin\\main.exe)",
+      "name": "main.exe (C:\\Users\\andre\\Downloads\\BIO_ENG 410\\GUI Development V 3.0\\lv_sim_eclipse_sdl\\bin\\main.exe)"
+    }
+  ]
+}
