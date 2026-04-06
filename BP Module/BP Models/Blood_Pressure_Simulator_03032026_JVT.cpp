@@ -80,7 +80,7 @@ int main() {
     } else if (isHypo = true) {
         int global_SBP = SBP_hypo;
         int global_DBP = DBP_hypo;
-    }
+    } 
 
 
     //While the simulation is running, just set upper bound to some arbitrary time T
