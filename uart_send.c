@@ -42,9 +42,8 @@ void uart_send_state(void)
     char buffer[256];
 
     snprintf(buffer, sizeof(buffer),
-        //"Scenario:%d\nOxygen:%d\nBloodPressure:%d\nFitzpatrick:%d\nTemperature:%d\n",
-        "%s,%s,%d,%d,%s,%s,%s,%s,%d,%d\n",
-        get_scenario_string(),
+        //Oxygen:%d\nBloodPressure:%d\nFitzpatrick:%d\nTemperature:%d\n",
+        "%s,%d,%d,%s,%s,%s,%s,%d,%d\n",
         get_oxygen_string(),
         app_state.systolic,
         app_state.diastolic,

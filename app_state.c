@@ -5,13 +5,6 @@ app_state_t app_state = { 0 };
 
 /* ── Lookup Tables (Synchronized with PC Simulator) ────────── */
 
-static const char* scenario_strings[] = {
-    "N/A",
-    "Scenario 1",
-    "Scenario 2",
-    "Scenario 3",
-    "Scenario 4"
-};
 
 static const char* oxygen_strings[] = {
     "Healthy",
@@ -20,7 +13,7 @@ static const char* oxygen_strings[] = {
 };
 
 static const char* bp_strings[] = {
-    "N/A",
+    "Manual Selection",
     "Healthy",
     "Stage I Hypertensive",
     "Stage II Hypertensive",
@@ -28,7 +21,6 @@ static const char* bp_strings[] = {
 };
 
 static const char* fitz_strings[] = {
-    "No Selection",
     "I",
     "II",
     "III",
@@ -50,10 +42,7 @@ static const char* korotkoff_strings[] = {
 
 /* ── Getter Functions ──────────────────────────────────────── */
 
-const char* get_scenario_string(void)
-{
-    return scenario_strings[app_state.scenario];
-}
+
 
 const char* get_oxygen_string(void)
 {

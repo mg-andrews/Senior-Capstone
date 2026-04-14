@@ -11,7 +11,8 @@
 #include "pulse_ox.h"
 #include "app_state.h"
 #include "spo2_calc.h"
-#include "ui_home.h"
+#include "ui_home_os.h"
+#include "ui_home_bp.h"
 #define LV_USE_PERF_MONITOR 0
 
 // TODO Update UI to use buttons to scroll instead of dragging, since dragging is hard to do on a resistive screen.

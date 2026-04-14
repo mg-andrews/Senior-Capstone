@@ -4,8 +4,6 @@
 #include "lvgl.h"
 
 typedef struct {
-
-    int scenario;
     int oxygen;
     int blood_pressure;
     int fitzpatrick;
@@ -25,7 +23,6 @@ typedef struct {
 
 extern app_state_t app_state;
 
-const char* get_scenario_string(void);
 const char* get_oxygen_string(void);
 const char* get_bp_string(void);
 const char* get_fitz_string(void);
